@@ -1,6 +1,7 @@
 # This code is part of Tergite
 #
 # (C) Axel Andersson (2022)
+# (C) Martin Ahindura (2025)
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -20,13 +21,17 @@ import os
 import re
 from datetime import datetime
 from functools import partial
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, Callable, List
 
 import qblox_instruments
 import rich
 from qcodes import Instrument, find_or_create_instrument
-from qiskit.qobj import PulseQobj
-from quantify_core.data import handling as dh
+from qiskit.qobj import (
+    PulseQobj,
+    PulseQobjInstruction,
+    PulseQobjConfig,
+    PulseQobjExperiment,
+)
 from quantify_scheduler.backends.qblox.helpers import generate_port_clock_to_device_map
 from quantify_scheduler.backends.qblox_backend import hardware_compile
 from quantify_scheduler.compilation import determine_absolute_timing
@@ -41,7 +46,6 @@ from quantify_scheduler.instrument_coordinator.components.generic import (
 )
 from quantify_scheduler.instrument_coordinator.components.qblox import ClusterComponent
 
-import settings
 from app.libs.quantum_executor.base.executor import QuantumExecutor
 from app.libs.quantum_executor.quantify.experiment import QuantifyExperiment
 from app.libs.quantum_executor.utils.channel import Channel
@@ -49,7 +53,8 @@ from app.libs.quantum_executor.utils.config import (
     ClusterModuleType,
     QuantifyExecutorConfig,
 )
-from app.libs.quantum_executor.utils.instruction import Instruction
+from app.libs.quantum_executor.base.instruction import Instruction, extract_instructions
+from app.libs.quantum_executor.utils.general import flatten_list
 from app.libs.storage_file import StorageFile
 
 _QBLOX_CLUSTER_TYPE_MAP: Dict[ClusterModuleType, qblox_instruments.ClusterType] = {
@@ -77,9 +82,7 @@ class QuantifyExecutor(QuantumExecutor):
     shared_mem = dict()
 
     def __init__(self, config_file: Union[str, bytes, os.PathLike]):
-        super().__init__()
         conf = QuantifyExecutorConfig.from_yaml(config_file)
-
         self.quantify_config = conf.to_quantify()
         self.hardware_map = {
             clock: port
@@ -87,6 +90,9 @@ class QuantifyExecutor(QuantumExecutor):
                 self.quantify_config
             ).items()
         }
+        super().__init__(
+            experiment_cls=QuantifyExperiment, hardware_map=self.hardware_map
+        )
 
         # load clusters
         for cluster in conf.clusters:
@@ -185,46 +191,6 @@ class QuantifyExecutor(QuantumExecutor):
         t4 = datetime.now()
         print(t4 - t3, "DURATION OF MEASURING")
         return results
-
-    def construct_experiments(self, qobj: PulseQobj, /) -> list:
-        # storage array
-        tx = list()
-
-        for experiment_index, experiment in enumerate(qobj.experiments):
-            instructions = map(
-                partial(
-                    Instruction.from_qobj,
-                    config=qobj.config,
-                    hardware_map=self.hardware_map,
-                ),
-                experiment.instructions,
-            )
-            instructions = [item for sublist in instructions for item in sublist]
-
-            # create a nice name for the experiment.
-            experiment.header.name = StorageFile.sanitized_name(
-                experiment.header.name, experiment_index + 1
-            )
-
-            # convert OpenPulse experiment to Quantify schedule
-            tx.append(
-                QuantifyExperiment(
-                    header=experiment.header,
-                    instructions=instructions,
-                    config=qobj.config,
-                    channels=frozenset(
-                        Channel(
-                            clock=i.channel,
-                            frequency=0.0,
-                        )
-                        for i in instructions
-                    ),
-                    logger=self.logger,
-                )
-            )
-
-        self.logger.info(f"Translated {len(tx)} OpenPulse experiments.")
-        return tx
 
     @classmethod
     def close(cls):

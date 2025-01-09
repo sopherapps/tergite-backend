@@ -27,4 +27,3 @@ class BaseProgram(abc.ABC):
     name: str
     channels: FrozenSet[Channel]
     config: PulseQobjConfig
-    logger: ExperimentLogger

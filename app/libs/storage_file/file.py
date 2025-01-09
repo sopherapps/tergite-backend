@@ -1,6 +1,7 @@
 # This code is part of Tergite
 #
 # (C) Copyright Axel Andersson 2022
+# (C) Copyright Martin Ahindura 2025
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -9,38 +10,42 @@
 # Any modifications or derivative works of this code must retain this
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
-
 import functools
-import pickle
+import json
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Union
+from typing import Literal, Union, Optional, Any, Dict, List, Tuple, TypedDict
 
 import h5py
 import numpy as np
+import pydantic
 import xarray as xr
-import json
+
+from qiskit.providers.ibmq.utils.json_encoder import IQXJsonEncoder as PulseQobj_encoder
+from qiskit.qobj import PulseQobj, QobjHeader
 
 from . import utils as parse
 
+JOB_HDF5_FILE_DELIMITER = "~"
 
-class MeasLvl(Enum):
+
+class MeasLvl(int, Enum):
     DISCRIMINATED = 2
     INTEGRATED = 1
     RAW = 0
 
 
-class MeasRet(Enum):
+class MeasRet(int, Enum):
     AVERAGED = 1
     APPENDED = 0
 
 
-class RegisterOrder(Enum):
+class RegisterOrder(str, Enum):
     LITTLE_ENDIAN = "little"
     BIG_ENDIAN = "big"
 
 
-class RegisterSparsity(Enum):
+class RegisterSparsity(str, Enum):
     FULL = "full"
     SPARSE = "sparse"
 
@@ -65,52 +70,7 @@ class StorageFile:
         job_id: Union[str, None] = None,
         memory_slot_size: int = 100,  # the maximum number of classical register slots
     ):
-        self.mode = "r" if str.lower(mode) in ("r", "read") else "w"
-        self.file = h5py.File(storage_file, mode=self.mode)
-        self.memory_slot_size = memory_slot_size
-
-        if self.mode == "w":
-            assert tuid is not None, "tuid needs to be specified during write mode"
-            assert (
-                meas_return is not None
-            ), "meas_return needs to be specified during write mode"
-            assert (
-                meas_level is not None
-            ), "meas_level needs to be specified during write mode"
-            assert (
-                meas_return_cols is not None
-            ), "meas_return_cols needs to be specified during write mode"
-
-            self.file.attrs["tuid"] = self.tuid = tuid
-            self.file.attrs["meas_return"] = self.meas_return = meas_return.value
-            self.file.attrs["meas_level"] = self.meas_level = meas_level.value
-            self.file.attrs[
-                "meas_return_cols"
-            ] = self.meas_return_cols = meas_return_cols
-
-            if job_id is not None:
-                self.file.attrs["job_id"] = self.job_id = job_id
-                self.local = False
-            else:
-                self.local = True
-
-            self.header = self.file.create_group("header")
-            self.experiments = self.file.create_group("experiments")
-
-        else:
-            self.tuid = self.file.attrs["tuid"]
-            self.meas_return = MeasRet(self.file.attrs["meas_return"])
-            self.meas_level = MeasLvl(self.file.attrs["meas_level"])
-            self.meas_return_cols = self.file.attrs["meas_return_cols"]
-
-            if "job_id" in self.file.attrs.keys():
-                self.job_id = self.file.attrs["job_id"]
-                self.local = False
-            else:
-                self.local = True
-
-            self.header = self.file["header"]
-            self.experiments = self.file["experiments"]
+        pass
 
     # TODO: leave register_sparsity as full and set it to sparse for cases where there are multiple values per shot
     def as_readout(
@@ -261,18 +221,6 @@ class StorageFile:
                 f"Invalid storage file metadata: {self.meas_return} and {self.meas_level} is not implemented."
             )
 
-    # ------------------------------------------------------------------------
-    def get_experiment(self: "StorageFile", name: str):
-        """Returns an experiment group in the file, if it exists.
-        If it does not exist, makes a new experiment group and returns that.
-        """
-        if name not in self.experiments.keys():
-            experiment = self.experiments.create_group(name)
-        else:
-            experiment = self.experiments[name]
-
-        return experiment
-
     @functools.cached_property
     def sorted_measurements(self: "StorageFile") -> list:
         # TODO: this would only find files for simulated readout output
@@ -280,149 +228,6 @@ class StorageFile:
             parse.find(self.experiments, "measurement"),
             key=lambda path: path[0].split(self.delimiter)[1],
         )
-
-    # ------------------------------------------------------------------------
-    def store_metadata(
-        self: "StorageFile",
-        grpkey: str,
-        key: str,
-        tmp_data: dict,
-        DEFAULT_VALUE: object = "",
-    ):
-        """Helper function which stores metadata in a specific HDF group or dataset in this file."""
-        # retrieve referred group or dataset in HDF file
-        grp = self.file[grpkey]
-        # if the specified metadata exists
-        if key in tmp_data.keys():
-            # store metadata as an attribute for that group or dataset
-            grp.attrs[key] = tmp_data[key]
-        else:
-            print(f"Failed to store {key}")
-            grp.attrs[key] = DEFAULT_VALUE
-
-    def store_qobj_header(self: "StorageFile", qobj_header: dict):
-        """Stores metadata about the experiment from the qobj header."""
-        header_grp = self.header.create_group("qobj")
-
-        if "backend_name" in qobj_header:
-            backend_grp = header_grp.create_group("backend")
-            self.store_metadata("header/qobj/backend", "backend_name", qobj_header)
-
-        if "sweep" in qobj_header:
-            sweep_grp = header_grp.create_group("sweep")
-
-            self.store_metadata(
-                "header/qobj/sweep", "dataset_name", qobj_header["sweep"]
-            )
-            self.store_metadata(
-                "header/qobj/sweep", "serial_order", qobj_header["sweep"]
-            )
-            self.store_metadata(
-                "header/qobj/sweep", "batch_size", qobj_header["sweep"], DEFAULT_VALUE=1
-            )
-
-            for path in parse.find(qobj_header["sweep"], "slots"):
-                # create group for storage
-                slots_grp = sweep_grp.create_group("/".join(path))
-
-                param = path[
-                    -2
-                ]  # -1 is "slots", -2 is parameter name, -3 is "parameters"
-                self.store_metadata(
-                    f"header/qobj/sweep/parameters/{param}",
-                    "long_name",
-                    qobj_header["sweep"]["parameters"][param],
-                )
-                self.store_metadata(
-                    f"header/qobj/sweep/parameters/{param}",
-                    "unit",
-                    qobj_header["sweep"]["parameters"][param],
-                )
-
-                # traverse qobj_header["sweep"] until slots dict
-                slots_data = qobj_header["sweep"]
-                for k in path:
-                    slots_data = slots_data[k]
-
-                # store all specified sweep parameter data in respective HDF datasets
-                for slot_idx, slot_data in slots_data.items():
-                    data = np.asarray(slot_data)
-                    slots_grp.create_dataset(
-                        f"slot{StorageFile.delimiter}{slot_idx}",
-                        shape=data.shape,
-                        dtype=data.dtype,
-                    )
-                    slots_grp[f"slot{StorageFile.delimiter}{slot_idx}"][...] = data
-
-    def store_graph(self: "StorageFile", graph: object, name: str):
-        """Store the bytes of an experiment's graph into its experiment group.
-        This graph can be loaded with StorageFile.read_graph.
-        # TODO: I cannot find any place where this read_graph is implemented and I do not see why we would need it
-        """
-        experiment = self.get_experiment(name)
-        blob = pickle.dumps(graph)
-        g = experiment.create_dataset(
-            "experiment_graph", shape=len(blob), dtype=np.ubyte
-        )
-        g[...] = np.frombuffer(blob, dtype=np.ubyte)
-
-    def store_experiment_data(self: "StorageFile", *, experiment_data: dict, name: str):
-        """Store the data of an acquisition into an experiment group."""
-        experiment = self.get_experiment(name)
-
-        for acq_index, acq in enumerate(experiment_data["data_vars"]):
-            ch = f"slot{StorageFile.delimiter}{acq}"
-            # Get maximum acquisition index in each acquisition channel
-            max_acq_idx = experiment_data["dims"][f"acq_index_{acq_index}"]
-
-            # For each acqusition channel, create a corresponding measurement matrix
-            # in a memory slot whose index corresponds to the acqusition channel,
-            # unless it already exists.
-            if ch not in experiment.keys():
-                channel = experiment.create_group(ch)
-
-                # The columns of the matrix are the # of shots and the rows are
-                # the horizontally composed measurements on the acqusition channel
-                # (row indices corresponding to acquisition indices)
-                print(f"creating data set for {ch}")
-                channel.create_dataset(
-                    "measurement",
-                    shape=(max_acq_idx, self.meas_return_cols),
-                    dtype=complex,
-                )
-
-        for acq, data in experiment_data["data_vars"].items():
-            ch = f"slot{StorageFile.delimiter}{acq}"
-
-            tmp = np.zeros(len(data["data"]), dtype=complex)
-
-            for idx in range(len(data["data"])):
-                tmp.real[idx] = np.real(data["data"][idx])
-                tmp.imag[idx] = np.imag(data["data"][idx])
-
-            experiment[ch]["measurement"][...] = tmp
-
-    def store_qobj_metadata(self: "StorageFile", qobj: dict):
-        """Stores metadata about the experiment from the qobj header."""
-        metadata_grp = self.header.create_group("qobj_metadata")
-        qobj_metadata = {}
-        qobj_metadata["shots"] = qobj["config"]["shots"]
-        qobj_metadata["qobj_id"] = qobj["qobj_id"]
-        qobj_metadata["num_experiments"] = len(qobj["experiments"])
-
-        self.store_metadata("header/qobj_metadata", "shots", qobj_metadata)
-        self.store_metadata("header/qobj_metadata", "qobj_id", qobj_metadata)
-        self.store_metadata("header/qobj_metadata", "num_experiments", qobj_metadata)
-
-    def store_qobj_data(self: "StorageFile", qobj_str: str):
-        """Stores metadata about the experiment from the qobj header."""
-        data_grp = self.header.create_group("qobj_data")
-        qobj_data = {}
-        qobj_data["experiment_data"] = qobj_str
-
-        self.store_metadata("header/qobj_data", "experiment_data", qobj_data)
-
-    # ------------------------------------------------------------------------
 
     @classmethod
     def sort_items(cls: "StorageFile", items: list, reverse: bool = False) -> iter:
@@ -437,3 +242,276 @@ class StorageFile:
             x for x in users_experiment_name if x.isalnum() or x in " -_,.()"
         )
         return f"{name}{StorageFile.delimiter}{experiment_index}"
+
+
+class QobjMetadata(pydantic.BaseModel):
+    """Metadata on a Qobject instance"""
+
+    shots: int
+    qobj_id: str
+    num_experiments: int
+
+    @classmethod
+    def from_qobj(cls, qobj: PulseQobj):
+        """Constructs the metadata from the qobject
+        Args:
+            qobj: the qobject whose metadata is to be obtained
+
+        Returns:
+            the QobjectMetadata for the given qobject
+        """
+        return cls(
+            shots=qobj.config.shots,
+            qobj_id=qobj.qobj_id,
+            num_experiments=len(qobj.experiments),
+        )
+
+
+class XArrayDict(TypedDict):
+    coords: Any
+    attrs: Any
+    dims: Any
+    data_vars: Any
+    encoding: Optional[Any]
+
+
+class QuantumJob(pydantic.BaseModel):
+    """Schema of the job data sent from the client"""
+
+    tuid: str
+    meas_return: MeasRet
+    meas_level: MeasLvl
+    meas_return_cols: int
+    job_id: Optional[str] = None
+    memory_slot_size: int = 100
+    local: bool = True
+    qobj: Optional[PulseQobj] = None
+    metadata: Optional[QobjMetadata] = None
+    header: Optional[QobjHeader] = None
+    experiment_results: Dict[str, XArrayDict] = {}
+
+    @pydantic.validator("metadata")
+    def set_qobj_metadata(cls, v: Optional[QobjMetadata], values: dict, **kwargs):
+        """Validator to set the metadata based on the qobj"""
+        if "qobj" in values:
+            return QobjMetadata.from_qobj(values["qobj"])
+        return v
+
+    @classmethod
+    def from_hdf5(cls, file: Path, **kwargs):
+        """Extract the quantum job from the hdf5 file
+
+        The kwargs override any values defined in the file
+
+        Args:
+            file: the path to the file
+            kwargs: extra key-word args
+        """
+        props = {}
+        with h5py.File(file, mode="r") as hdf5_file:
+            props["tuid"] = hdf5_file.attrs["tuid"]
+            props["meas_return"] = MeasRet(hdf5_file.attrs["meas_return"])
+            props["meas_level"] = MeasLvl(hdf5_file.attrs["meas_level"])
+            props["meas_return_cols"] = hdf5_file.attrs["meas_return_cols"]
+            props["header"] = hdf5_file["header"]
+            props["experiment_results"] = hdf5_file["experiments"]
+
+            if "job_id" in hdf5_file.attrs.keys():
+                props["job_id"] = hdf5_file.attrs["job_id"]
+                props["local"] = False
+
+        return cls(**{**props, **kwargs})
+
+    def to_hdf5(self, file: Path):
+        """Saves this job to an HDF5 file
+
+        Args:
+            file: the path to the file where the data is to be saved
+        """
+        with h5py.File(file, mode="w") as hdf5_file:
+            hdf5_file.attrs["tuid"] = self.tuid
+            hdf5_file.attrs["meas_return"] = self.meas_return.value
+            hdf5_file.attrs["meas_level"] = self.meas_level.value
+            hdf5_file.attrs["meas_return_cols"] = self.meas_return_cols
+
+            if self.job_id is not None:
+                hdf5_file.attrs["job_id"] = self.job_id
+
+            _save_header_to_hdf5(hdf5_file, self.header)
+            _save_qobj_to_hdf5(hdf5_file, self.qobj)
+            _save_results_to_hdf5(
+                hdf5_file,
+                self.experiment_results,
+                meas_return_cols=self.meas_return_cols,
+            )
+
+
+def _save_header_to_hdf5(file: h5py.File, header: QobjHeader):
+    """Saves the given header to the HDF5 file
+
+    Args:
+        file: the HDF5 file to save to
+        header: the QobjHeader to save
+    """
+    header_data = header.to_dict()
+
+    # save backend metadata
+    backend_metadata = _get_subset_dict(header_data, keys=("backend_name",))
+    _copy_hdf5_metadata(file, path="header/qobj/backend", source=backend_metadata)
+
+    # save sweep metadata
+    sweep_data = header_data.get("sweep", {})
+    sweep_metadata = _get_subset_dict(
+        sweep_data,
+        keys=("dataset_name", "serial_order", "batch_size"),
+        defaults={"batch_size": 1},
+    )
+    _copy_hdf5_metadata(file, path="header/qobj/sweep", source=sweep_metadata)
+
+    # save slots metadata
+    for path in parse.find(sweep_data, "slots"):
+        sweep_group = file["header/qobj/sweep"]
+        slots_grp = sweep_group.create_group("/".join(path))
+
+        # -1 is "slots", -2 is parameter name, -3 is "parameters"
+        param = path[-2]
+        param_group_path = f"header/qobj/sweep/parameters/{param}"
+        param_source = _get_subset_dict(
+            sweep_data["parameters"][param], keys=("long_name", "unit")
+        )
+        _copy_hdf5_metadata(file, path=param_group_path, source=param_source)
+
+        slots_dict = _get_value_at_path(sweep_data, path)
+        # store all specified sweep parameter data in respective HDF datasets
+        for slot_idx, slot_data in slots_dict.items():
+            data = np.asarray(slot_data)
+            dataset_key = f"slot{JOB_HDF5_FILE_DELIMITER}{slot_idx}"
+            slots_grp.create_dataset(dataset_key, data=data)
+
+
+def _save_qobj_to_hdf5(file: h5py.File, qobj: PulseQobj):
+    """Saves the qobj as metadata in the HDF5 file
+
+    Args:
+        file: the HDF5 file to save to
+        qobj: the qobject whose metadata is being saved
+    """
+    # save the raw metadata
+    _copy_hdf5_metadata(
+        file,
+        path="header/qobj_metadata",
+        source={
+            "shots": qobj.config.shots,
+            "qobj_id": qobj.qobj_id,
+            "num_experiments": len(qobj.experiments),
+        },
+    )
+
+    # save the raw experiments
+    experiment_data = json.dumps(qobj.to_dict(), cls=PulseQobj_encoder, indent="\t")
+    _copy_hdf5_metadata(
+        file,
+        path="header/qobj_data",
+        source={"experiment_data": experiment_data},
+    )
+
+
+def _save_results_to_hdf5(
+    file: h5py.File, results: Dict[str, XArrayDict], meas_return_cols: int
+):
+    """Saves the experiment results to the HDF5 file
+
+    Args:
+        file: the HDF5 file to save to
+        results: the experiment results to save
+        meas_return_cols: the meas_return_cols from the program settings
+    """
+    for name, result in results.items():
+        path = f"experiments/{name}"
+        data_vars = result["data_vars"]
+
+        for acq_index, acq in enumerate(data_vars):
+            channel = f"slot{JOB_HDF5_FILE_DELIMITER}{acq}"
+            channel_path = f"{path}/{channel}"
+            data_path = f"{channel_path}/measurement"
+
+            # Get maximum acquisition index in each acquisition channel
+            max_acq_idx = result["dims"][f"acq_index_{acq_index}"]
+
+            # For each acqusition channel, create a corresponding measurement matrix
+            # in a memory slot whose index corresponds to the acqusition channel,
+            # unless it already exists.
+            if channel_path not in file:
+                # The columns of the matrix are the # of shots and the rows are
+                # the horizontally composed measurements on the acqusition channel
+                # (row indices corresponding to acquisition indices)
+                dset = file.require_dataset(
+                    data_path,
+                    shape=(max_acq_idx, meas_return_cols),
+                    dtype=complex,
+                )
+            else:
+                dset = file[data_path]
+
+            # save the data as complex number array
+            data = data_vars[acq]
+            tmp = np.zeros(len(data["data"]), dtype=complex)
+
+            for idx in range(len(data["data"])):
+                tmp.real[idx] = np.real(data["data"][idx])
+                tmp.imag[idx] = np.imag(data["data"][idx])
+
+            dset[...] = tmp
+
+
+def _copy_hdf5_metadata(file: h5py.File, path: str, source: dict):
+    """Copy the whole dict to HDF5 metadata for to the given group_path
+
+    Args:
+        file: the HDF5 file
+        path: the /-separated path to the group
+        source: the dictionary to copy from
+    """
+    if len(source) == 0:
+        # do nothing if dict is empty
+        return
+
+    if path not in file:
+        group = file.create_group(path)
+    else:
+        group = file[path]
+
+    for key, value in source.items():
+        group.attrs[key] = value
+
+
+def _get_value_at_path(data: dict, path: List[str]) -> Any:
+    """Retrieves the value at the given path of the nested dict data
+
+    e.g. ["foo", "bar", "py"] return data["foo"]["bar"]["py"]
+
+    Args:
+        data: the nested dictionary
+        path: the path to the value needed
+
+    Returns:
+        the value at the given path
+    """
+    value = data
+    for part in path:
+        value = data[part]
+
+    return value
+
+
+def _get_subset_dict(
+    data: Dict[str, Any],
+    keys: Tuple[str, ...],
+    defaults: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Gets a subset of a dictionary having the given keys if they exist"""
+    if defaults is None:
+        defaults = {}
+
+    all_data = {**defaults, **data}
+    return {k: all_data[k] for k in keys if k in all_data}

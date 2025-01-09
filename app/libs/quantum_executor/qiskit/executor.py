@@ -1,6 +1,7 @@
 # This code is part of Tergite
 #
 # (C) Stefan Hill (2024)
+# (C) Martin Ahindura (2025)
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -9,75 +10,37 @@
 # Any modifications or derivative works of this code must retain this
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
-
+import copy
 from functools import partial
+from typing import List, Optional, Dict
 
 import numpy as np
+import qiskit
 import xarray
-from qiskit.qobj import PulseQobj
+from qiskit.qobj import PulseQobj, PulseQobjExperiment, PulseQobjConfig
+from qiskit.result import Result
 
 import app.libs.storage_file as storagefile
 from app.libs.quantum_executor.base.executor import QuantumExecutor
 from app.libs.quantum_executor.base.experiment import BaseExperiment
 from app.libs.quantum_executor.qiskit.experiment import QiskitDynamicsExperiment
 from app.libs.quantum_executor.utils.channel import Channel
-from app.libs.quantum_executor.utils.instruction import Instruction
+from app.libs.quantum_executor.base.instruction import Instruction, extract_instructions
 from .backend import QiskitPulse1Q, QiskitPulse2Q
 from .transpile import transpile
+from ..utils.general import flatten_list
 from ...properties import BackendConfig
 
 
 class QiskitDynamicsExecutor(QuantumExecutor):
     def __init__(self, backend_config: BackendConfig):
-        super().__init__()
-
+        super().__init__(experiment_cls=QiskitDynamicsExperiment)
         self.backend = QiskitPulse1Q(backend_config=backend_config)
 
     def run(self, experiment: BaseExperiment, /) -> xarray.Dataset:
         job = self.backend.run(experiment.schedule)
-        result = job.result()
+        result: Result = job.result()
         return result.data()["memory"]
-
-    def construct_experiments(self, qobj: PulseQobj, /):
-        # storage array
-        tx = list()
-        for experiment_index, experiment in enumerate(qobj.experiments):
-            # TODO SIM: This whole thing to translate everything into a wrapper object for the instruction is not necessary
-            # - We can directly take the qobj as it is
-            # - In the qobj there is a list of experiments
-            # - We have to iterate over the experiments and create a schedule for each of them
-
-            instructions = map(
-                partial(Instruction.from_qobj, config=qobj.config),
-                experiment.instructions,
-            )
-            instructions = [item for sublist in instructions for item in sublist]
-
-            # create a nice name for the experiment.
-            experiment.header.name = storagefile.StorageFile.sanitized_name(
-                experiment.header.name, experiment_index + 1
-            )
-
-            # convert OpenPulse experiment to Qiskit Dynamics schedule
-            # TODO SIM: If we wanted to get rid of this overly complicated notation of the Experiment object, we would have to check where it is used in the storage file as well
-            tx.append(
-                QiskitDynamicsExperiment(
-                    header=experiment.header,
-                    instructions=instructions,
-                    config=qobj.config,
-                    channels=frozenset(
-                        Channel(
-                            clock=i.channel,
-                            frequency=0.0,
-                        )
-                        for i in instructions
-                    ),
-                    logger=self.logger,
-                )
-            )
-
-        self.logger.info(f"Translated {len(tx)} OpenPulse experiments.")
-        return tx
 
     def close(self):
         pass
@@ -85,7 +48,7 @@ class QiskitDynamicsExecutor(QuantumExecutor):
 
 class QiskitPulse1QExecutor(QuantumExecutor):
     def __init__(self, backend_config: BackendConfig):
-        super().__init__()
+        super().__init__(experiment_cls=QiskitDynamicsExperiment)
         # TODO: Use measurement level provided by the client request if discriminator is not provided
         self.backend = QiskitPulse1Q(
             meas_level=1, meas_return="single", backend_config=backend_config
@@ -132,16 +95,16 @@ class QiskitPulse1QExecutor(QuantumExecutor):
 
         return ds
 
-    def construct_experiments(self, qobj: PulseQobj, /):
-        # because we avoid experiments structure we have to pass shots and
-        # measurement level configurations to the run function
-        self.shots = qobj.config.shots
-        self.meas_return = qobj.config.meas_return
-        qobj_dict = qobj.to_dict()
-        tx = transpile(qobj_dict)
-
-        self.logger.info(f"Translated {len(tx)} OpenPulse experiments.")
-        return tx
+    # def construct_experiments(self, qobj: PulseQobj, /) -> List[QiskitDynamicsExperiment]:
+    #     # because we avoid experiments structure we have to pass shots and
+    #     # measurement level configurations to the run function
+    #     self.shots = qobj.config.shots
+    #     self.meas_return = qobj.config.meas_return
+    #     qobj_dict = qobj.to_dict()
+    #     tx = transpile(qobj_dict)
+    #
+    #     self.logger.info(f"Translated {len(tx)} OpenPulse experiments.")
+    #     return tx
 
     def close(self):
         pass
@@ -184,14 +147,14 @@ class QiskitPulse2QExecutor(QuantumExecutor):
         ds = xarray.Dataset(data_vars=data_vars, coords=coords)
         return ds
 
-    def construct_experiments(self, qobj: PulseQobj, /):
-        qobj_dict = qobj.to_dict()
-        self.shots = qobj.config.shots
-        self.meas_return = qobj.config.meas_return
-        tx = transpile(qobj_dict)
-
-        self.logger.info(f"Translated {len(tx)} OpenPulse experiments.")
-        return tx
+    # def construct_experiments(self, qobj: PulseQobj, /) -> List[QiskitDynamicsExperiment]:
+    #     qobj_dict = qobj.to_dict()
+    #     self.shots = qobj.config.shots
+    #     self.meas_return = qobj.config.meas_return
+    #     tx = transpile(qobj_dict)
+    #
+    #     self.logger.info(f"Translated {len(tx)} OpenPulse experiments.")
+    #     return tx
 
     def close(self):
         pass

@@ -1,6 +1,7 @@
 # This code is part of Tergite
 #
 # (C) Stefan Hill (2024)
+# (C) Martin Ahindura (2025)
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -11,32 +12,37 @@
 # that they have been altered from the originals.
 
 import abc
+import copy
 import json
 from datetime import datetime
 from pathlib import Path
 from traceback import format_exc
-from typing import Optional
+from typing import Optional, List, Type, Dict
 
 import numpy as np
 import rich
 import xarray
 from qiskit.providers.ibmq.utils.json_encoder import IQXJsonEncoder as PulseQobj_encoder
-from qiskit.pulse import Schedule
 from qiskit.qobj import PulseQobj
 from quantify_core.data import handling as dh
 from quantify_core.data.handling import create_exp_folder, gen_tuid
-from tqdm import tqdm
 
 import settings
 from app.libs.quantum_executor.base.experiment import BaseExperiment
-from app.libs.quantum_executor.utils.instruction import meas_settings
+from app.libs.quantum_executor.base.instruction import get_meas_settings
 from app.libs.quantum_executor.utils.logger import ExperimentLogger
-from app.libs.storage_file import StorageFile
+from app.libs.storage_file.file import QuantumJob, StorageFile
 
 
 class QuantumExecutor(abc.ABC):
-    def __init__(self):
+    def __init__(
+        self,
+        experiment_cls: Type[BaseExperiment],
+        hardware_map: Optional[Dict[str, str]] = None,
+    ):
         dh.set_datadir(settings.EXECUTOR_DATA_DIR)
+        self.experiment_cls: Type[BaseExperiment] = experiment_cls
+        self.hardware_map = hardware_map
 
     def register_job(self, tag: str = ""):
         # TODO: The fields tuid, experiment_folder, and logger could be class properties
@@ -56,9 +62,27 @@ class QuantumExecutor(abc.ABC):
         rich.print(f"Saved PulseQobj at {file}")
         self.logger.info(f"Saved PulseQobj at {file}")
 
-    @abc.abstractmethod
-    def construct_experiments(self, qobj: PulseQobj, /):
-        pass
+    def construct_experiments(self, qobj: PulseQobj, /) -> List[BaseExperiment]:
+        """Constructs native experiments from the PulseQobj instance
+
+        Args:
+            qobj: the Pulse qobject containing the experiments
+
+        Returns:
+            list of QuantifyExperiment's
+        """
+        self.logger.info(f"Compiling qobj")
+        native_experiments = [
+            self.experiment_cls.from_qobj_expt(
+                name=StorageFile.sanitized_name(expt.header.name, idx + 1),
+                expt=expt,
+                qobj_config=qobj.config,
+                hardware_map=self.hardware_map,
+            )
+            for idx, expt in enumerate(qobj.experiments)
+        ]
+        self.logger.info(f"Translated {len(native_experiments)} OpenPulse experiments.")
+        return native_experiments
 
     @abc.abstractmethod
     def run(self, experiment: BaseExperiment, /) -> xarray.Dataset:
@@ -69,21 +93,18 @@ class QuantumExecutor(abc.ABC):
         qobj: PulseQobj,
         /,
         *,
-        enable_traceback: bool = True,
         job_id: str = None,
     ) -> Optional[Path]:
         """Runs the experiments and returns the results file path
 
         Args:
             qobj: the Quantum object that is to be executed
-            enable_traceback: whether to show the traceback of errors or not
             job_id: the ID of the job
 
         Returns:
             the path to the results obtained after measurement
         """
         self.debug_save_qobj(qobj)
-        results_file_path: Optional[Path] = None
         try:
             # unwrap pulse library
             qobj.config.pulse_library = {
@@ -91,91 +112,47 @@ class QuantumExecutor(abc.ABC):
             }
 
             # translate qobj experiments to quantify schedules
-            # TODO: Sometimes, we have still print statements, can we replace them with loggers?
-            print(datetime.now(), "IN RUN_EXPERIMENTS, START CONSTRUCTING")
+            self.logger.info(
+                f"Starting constructing experiments for job id: {job_id} at {datetime.now()}"
+            )
             tx = self.construct_experiments(qobj)
 
-            program_settings = meas_settings(qobj.config)
-            for k, v in program_settings.items():
+            program_settings = get_meas_settings(qobj.config)
+            for k, v in program_settings.dict().items():
                 self.logger.info(f"Set {k} to {v}")
 
-            # create a storage hdf file
-            filename = "measurement.hdf5" if job_id is None else f"{job_id}.hdf5"
-            results_file_path = self.experiment_folder / filename
-            storage = StorageFile(
-                results_file_path,
-                mode="w",
+            self.logger.info(f"Running experiments for job id: {job_id}")
+            experiment_results = {
+                expt.header.name: self.run(expt).to_dict() for expt in tx
+            }
+
+            job = QuantumJob(
                 job_id=job_id,
                 tuid=self.tuid,
-                meas_return=program_settings["meas_return"],
-                meas_return_cols=program_settings["meas_return_cols"],
-                meas_level=program_settings["meas_level"],
+                meas_return=program_settings.meas_return,
+                meas_return_cols=program_settings.meas_return_cols,
+                meas_level=program_settings.meas_level,
                 memory_slot_size=qobj.config.memory_slot_size,
+                qobj=qobj,
+                header=qobj.header,
+                experiments=experiment_results,
             )
 
-            # store numpy header metadata
-            storage.store_qobj_header(qobj_header=qobj.header.to_dict())
-            # store experiment metadata
-            storage.store_qobj_metadata(qobj=qobj.to_dict())
-            storage.store_qobj_data(
-                qobj_str=json.dumps(qobj.to_dict(), cls=PulseQobj_encoder, indent="\t")
+            filename = "measurement.hdf5" if job_id is None else f"{job_id}.hdf5"
+            results_file_path = self.experiment_folder / filename
+            job.to_hdf5(results_file_path)
+
+            self.logger.info(f"Stored measurement data at {results_file_path}")
+            self.logger.info(
+                f"Completed {job_id if job_id else 'local job'} with tuid {self.tuid}."
             )
-
-            # run all experiments and store acquisition data
-            for experiment_index, experiment in enumerate(
-                tqdm(
-                    tx,
-                    ascii=" #",
-                    desc=self.tuid,
-                )
-            ):
-                print(datetime.now(), "IN RUN_EXPERIMENTS, START RUN")
-
-                experiment_data = self.run(experiment)
-                experiment_data = experiment_data.to_dict()
-
-                if isinstance(experiment, BaseExperiment):
-                    experiment_name = experiment.header.name
-                elif isinstance(experiment, Schedule):
-                    experiment_name = storage.sanitized_name(
-                        qobj.experiments[0].header.name, experiment_index + 1
-                    )
-                else:
-                    raise ValueError(
-                        "Experiment object type is incorrect %s" % type(experiment)
-                    )
-                storage.store_experiment_data(
-                    experiment_data=experiment_data, name=experiment_name
-                )
-                if isinstance(experiment, BaseExperiment):
-                    storage.store_graph(graph=experiment.dag, name=experiment_name)
-
-            self.logger.info(f"Stored measurement data at {storage.file.filename}")
-
-            rich.print(
-                ok_str := f"Completed {job_id if job_id else 'local job'} with tuid {self.tuid}."
-            )
-            self.logger.info(ok_str)
 
         # record exceptions
         except Exception as e:
-            exc_str = f"\n{format_exc()}"
-            if enable_traceback:
-                rich.print(exc_str)
-            self.logger.error(exc_str)
-
-            rich.print(
-                fail_str := f"Failed {job_id if job_id else 'local job'} with tuid {self.tuid}. Error: {repr(e)}"
+            self.logger.error(
+                f"\nFailed job: {job_id}, tuid: {self.tuid}\n{format_exc()}"
             )
-            self.logger.info(fail_str)
             raise e
-
-        # cleanup, regardless if job failed or succeeded
-        finally:
-            try:
-                storage.file.close()
-            except UnboundLocalError:
-                pass  # no storage to close
 
         return results_file_path
 

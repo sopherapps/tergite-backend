@@ -1,6 +1,7 @@
 # This code is part of Tergite
 #
 # (C) Axel Andersson (2022)
+# (C) Martin Ahindura (2025)
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -14,7 +15,11 @@
 
 import json
 import sys
-from typing import List
+from typing import List, TypeVar, Iterator, Union, Generator, Iterable
+
+from app.libs.storage_file.file import JOB_HDF5_FILE_DELIMITER
+
+_T = TypeVar("_T")
 
 
 def find(haystack, needle):
@@ -43,6 +48,7 @@ def freeze(d: dict) -> frozenset:
 
 
 def ceil4(n):
+    """FIXME: What exactly is this doing and why?"""
     return n + (4 - n) % 4
 
 
@@ -182,3 +188,36 @@ def get_duplicates(texts: List[str]) -> List[str]:
         else:
             seen.add(name)
     return duplicates
+
+
+def get_experiment_name(qobj_expt_name: str, expt_index: int):
+    """
+    Creates a cleaned version of a given experiment name
+
+    Args:
+        qobj_expt_name: the name as got from the qobject
+        expt_index: the index of the experiment in the list of experiments in the qobject
+
+    Returns:
+        a sanitized name to use internally
+    """
+    name = "".join(x for x in qobj_expt_name if x.isalnum() or x in " -_,.()")
+    return f"{name}{JOB_HDF5_FILE_DELIMITER}{expt_index}"
+
+
+def flatten_list(
+    items: Union[
+        Iterator[Iterator[_T]],
+        Generator[Iterable[_T], None, None],
+        Iterable[Iterable[_T]],
+    ]
+) -> List[_T]:
+    """Flattens a list of lists
+
+    Args:
+        items: the nested list to flatten
+
+    Returns:
+        the list flattened list
+    """
+    return [item for sublist in items for item in sublist]

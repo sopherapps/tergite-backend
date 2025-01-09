@@ -13,16 +13,18 @@
 # Refactored by Martin Ahindura (2024)
 
 import abc
+import copy
 from dataclasses import dataclass
 from functools import cached_property
-from typing import FrozenSet, List
+from typing import FrozenSet, List, Optional, Dict
 
 import retworkx as rx
 from pandas import DataFrame
-from qiskit.qobj import PulseQobjConfig, QobjExperimentHeader
+from qiskit.qobj import PulseQobjConfig, QobjExperimentHeader, PulseQobjExperiment
 
 from app.libs.quantum_executor.utils.channel import Channel
-from app.libs.quantum_executor.utils.instruction import Instruction
+from app.libs.quantum_executor.base.instruction import Instruction, extract_instructions
+from app.libs.quantum_executor.utils.general import flatten_list
 from app.libs.quantum_executor.utils.logger import ExperimentLogger
 
 
@@ -32,7 +34,6 @@ class BaseExperiment(abc.ABC):
     instructions: List[Instruction]
     config: PulseQobjConfig
     channels: FrozenSet[Channel]
-    logger: ExperimentLogger
     buffer_time: float = 0.0
 
     @cached_property
@@ -65,3 +66,45 @@ class BaseExperiment(abc.ABC):
         df = self.schedule.timing_table.data
         df.sort_values("abs_time", inplace=True)
         return df
+
+    @classmethod
+    def from_qobj_expt(
+        cls,
+        expt: PulseQobjExperiment,
+        name: str,
+        qobj_config: PulseQobjConfig,
+        hardware_map: Optional[Dict[str, str]],
+    ) -> "BaseExperiment":
+        """Converts PulseQobjExperiment to native experiment
+
+        Args:
+            expt: the pulse qobject experiment to translate
+            name: the name of the experiment
+            qobj_config: the pulse qobject config
+            hardware_map: the map of the real/simulated device to the logical definitions
+
+        Returns:
+            the QiskitDynamicsExperiment corresponding to the PulseQobj
+        """
+        header = copy.copy(expt.header)
+        header.name = name
+        inst_nested_list = (
+            extract_instructions(
+                qobj_inst=inst, config=qobj_config, hardware_map=hardware_map
+            )
+            for inst in expt.instructions
+        )
+        native_instructions = flatten_list(inst_nested_list)
+
+        return cls(
+            header=header,
+            instructions=native_instructions,
+            config=qobj_config,
+            channels=frozenset(
+                Channel(
+                    clock=i.channel,
+                    frequency=0.0,
+                )
+                for i in native_instructions
+            ),
+        )

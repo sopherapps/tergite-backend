@@ -24,7 +24,7 @@ from quantify_scheduler.resources import ClockResource
 
 from app.libs.quantum_executor.base.program import BaseProgram
 from app.libs.quantum_executor.utils.channel import Channel
-from app.libs.quantum_executor.utils.instruction import Instruction
+from app.libs.quantum_executor.base.instruction import Instruction
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,6 @@ class QuantifyProgram(BaseProgram):
         for channel in self.channels:
             clock = ClockResource(name=channel.clock, freq=channel.frequency)
             self.schedule.add_resource(clock)
-            self.logger.info(f"Added resource: {clock}")
 
         return determine_absolute_timing(self.schedule)
 

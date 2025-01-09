@@ -10,11 +10,8 @@
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
 
-from dataclasses import dataclass
-from functools import cached_property
 from typing import FrozenSet
 
-import qiskit.pulse
 from qiskit.pulse import (
     SetPhase,
     SetFrequency,
@@ -33,7 +30,7 @@ from qiskit.pulse.schedule import Schedule
 from qiskit.qobj import PulseQobjConfig
 
 from app.libs.quantum_executor.utils.channel import Channel
-from app.libs.quantum_executor.utils.instruction import (
+from app.libs.quantum_executor.base.instruction import (
     Instruction as OpenPulseInstruction,
 )
 from app.libs.quantum_executor.utils.logger import ExperimentLogger

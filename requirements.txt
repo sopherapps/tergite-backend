@@ -9,6 +9,8 @@ networkx>=2.5.1
 toml>=0.10.2
 scikit-learn~=1.2.2
 pydantic>=1.10.18,<2.0
+# unfortunately, there are no wheels for darwin <12 for pyarrow >18.0.0
+pyarrow<18.0.0; sys_platform == 'darwin'
 # from quantify backend
 qiskit-ibmq-provider==0.20.2
 pandas==1.4.3

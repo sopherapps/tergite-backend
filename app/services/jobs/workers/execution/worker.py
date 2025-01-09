@@ -87,7 +87,7 @@ def job_execute(job_file: Path):
             print(datetime.now(), "IN REST API CALLING RUN_EXPERIMENTS")
 
             results_file = executor.run_experiments(
-                PulseQobj.from_dict(qobj), enable_traceback=True, job_id=job_id
+                PulseQobj.from_dict(qobj), job_id=job_id
             )
         except Exception as exp:
             print("Job failed")

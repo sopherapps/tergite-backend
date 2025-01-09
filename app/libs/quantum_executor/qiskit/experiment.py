@@ -24,12 +24,10 @@ from qiskit.pulse.schedule import Schedule
 class QiskitDynamicsExperiment(BaseExperiment):
     @property
     def schedule(self) -> "Schedule":
-        self.logger.info(f"Compiling {self.header.name}")
         prog = QiskitDynamicsProgram(
             name=self.header.name,
             channels=self.channels,
             config=self.config,
-            logger=self.logger,
         )
         wccs = rx.weakly_connected_components(self.dag)
         for wcc in wccs:

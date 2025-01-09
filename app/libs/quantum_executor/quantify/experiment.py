@@ -20,19 +20,20 @@ from quantify_scheduler import Schedule
 from app.libs.quantum_executor.base.experiment import BaseExperiment
 from app.libs.quantum_executor.quantify.program import QuantifyProgram
 from app.libs.quantum_executor.utils.general import rot_left
-from app.libs.quantum_executor.utils.instruction import initial_object
+from app.libs.quantum_executor.base.instruction.types import InitialObjectInstruction
+
+# FIXME: Why is this initial object hard coded here?
+initial_object = InitialObjectInstruction()
 
 
 @dataclass(frozen=True)
 class QuantifyExperiment(BaseExperiment):
     @property
     def schedule(self: "QuantifyExperiment") -> Schedule:
-        self.logger.info(f"Compiling {self.header.name}")
         prog = QuantifyProgram(
             name=self.header.name,
             channels=self.channels,
             config=self.config,
-            logger=self.logger,
         )
         prog.schedule_operation(initial_object, ref_op=None, rel_time=0.0)
 

@@ -10,25 +10,17 @@
 # Any modifications or derivative works of this code must retain this
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
-import copy
-from functools import partial
-from typing import List, Optional, Dict
 
 import numpy as np
-import qiskit
 import xarray
-from qiskit.qobj import PulseQobj, PulseQobjExperiment, PulseQobjConfig
 from qiskit.result import Result
 
-import app.libs.storage_file as storagefile
 from app.libs.quantum_executor.base.executor import QuantumExecutor
-from app.libs.quantum_executor.base.experiment import BaseExperiment
+from app.libs.quantum_executor.base.experiment import NativeExperiment, NativeQobjConfig
 from app.libs.quantum_executor.qiskit.experiment import QiskitDynamicsExperiment
-from app.libs.quantum_executor.utils.channel import Channel
-from app.libs.quantum_executor.base.instruction import Instruction, extract_instructions
 from .backend import QiskitPulse1Q, QiskitPulse2Q
-from .transpile import transpile
-from ..utils.general import flatten_list
+from ..base.utils import MeasRet
+from ..utils.logger import ExperimentLogger
 from ...properties import BackendConfig
 
 
@@ -37,7 +29,14 @@ class QiskitDynamicsExecutor(QuantumExecutor):
         super().__init__(experiment_cls=QiskitDynamicsExperiment)
         self.backend = QiskitPulse1Q(backend_config=backend_config)
 
-    def run(self, experiment: BaseExperiment, /) -> xarray.Dataset:
+    def _run_native(
+        self,
+        experiment: NativeExperiment,
+        /,
+        *,
+        native_config: NativeQobjConfig,
+        logger: ExperimentLogger,
+    ) -> xarray.Dataset:
         job = self.backend.run(experiment.schedule)
         result: Result = job.result()
         return result.data()["memory"]
@@ -53,17 +52,25 @@ class QiskitPulse1QExecutor(QuantumExecutor):
         self.backend = QiskitPulse1Q(
             meas_level=1, meas_return="single", backend_config=backend_config
         )
-        self.shots = 1024
 
-    def run(self, experiment: BaseExperiment, /) -> xarray.Dataset:
+    def _run_native(
+        self,
+        experiment: NativeExperiment,
+        /,
+        *,
+        native_config: NativeQobjConfig,
+        logger: ExperimentLogger,
+    ) -> xarray.Dataset:
+        meas_return = native_config.meas_return
+        shots = native_config.shots
         job = self.backend.run(
-            experiment, shots=self.shots, meas_return=self.meas_return
+            experiment.schedule, shots=shots, meas_return=meas_return.value
         )
         result = job.result()
         data = result.data()["memory"]
 
         # Combine real and imaginary parts into complex numbers
-        if self.meas_return == "avg":
+        if meas_return == MeasRet.AVERAGED:
             # for meas_return avg, there is only one data point averaged across the shots
             # Create acquisition index coordinate that matches the length of complex_data
             acq_index = np.arange(
@@ -112,20 +119,29 @@ class QiskitPulse1QExecutor(QuantumExecutor):
 
 class QiskitPulse2QExecutor(QuantumExecutor):
     def __init__(self, backend_config: BackendConfig):
-        super().__init__()
+        super().__init__(experiment_cls=QiskitDynamicsExperiment)
         self.backend = QiskitPulse2Q(
             meas_level=1, meas_return="single", backend_config=backend_config
         )
 
-    def run(self, experiment: BaseExperiment, /) -> xarray.Dataset:
+    def _run_native(
+        self,
+        experiment: NativeExperiment,
+        /,
+        *,
+        native_config: NativeQobjConfig,
+        logger: ExperimentLogger,
+    ) -> xarray.Dataset:
+        meas_return = native_config.meas_return
+        shots = native_config.shots
         job = self.backend.run(
-            experiment, shots=self.shots, meas_return=self.meas_return
+            experiment.schedule, shots=shots, meas_return=meas_return.value
         )
         result = job.result()
         data = result.data()["memory"]
 
         num_measured = data.shape[1]
-        if self.meas_return == "avg":
+        if meas_return == MeasRet.AVERAGED:
             raise NotImplementedError("Not implemented 2q avg.")
         else:
             # TODO: depending on the measurement level, adjust dataset structure

@@ -14,14 +14,14 @@ from dataclasses import dataclass
 
 import retworkx as rx
 
-from app.libs.quantum_executor.base.experiment import BaseExperiment
+from app.libs.quantum_executor.base.experiment import NativeExperiment
 from app.libs.quantum_executor.qiskit.program import QiskitDynamicsProgram
 
 from qiskit.pulse.schedule import Schedule
 
 
 @dataclass(frozen=True)
-class QiskitDynamicsExperiment(BaseExperiment):
+class QiskitDynamicsExperiment(NativeExperiment):
     @property
     def schedule(self) -> "Schedule":
         prog = QiskitDynamicsProgram(

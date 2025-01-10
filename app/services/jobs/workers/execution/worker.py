@@ -78,17 +78,13 @@ def job_execute(job_file: Path):
     # Just a locking mechanism to ensure jobs don't interfere with each other
     with get_executor_lock():
         try:
-            executor.register_job(qobj["header"].get("tag", ""))
-
             # --- In-place decode complex values
             # [[a,b],[c,d],...] -> [a + ib,c + id,...]
             json_decoder.decode_pulse_qobj(qobj)
 
             print(datetime.now(), "IN REST API CALLING RUN_EXPERIMENTS")
 
-            results_file = executor.run_experiments(
-                PulseQobj.from_dict(qobj), job_id=job_id
-            )
+            results_file = executor.run(PulseQobj.from_dict(qobj), job_id=job_id)
         except Exception as exp:
             print("Job failed")
             print(f"Job execution failed. exp: {exp}")

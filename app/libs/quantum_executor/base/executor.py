@@ -12,83 +12,82 @@
 # that they have been altered from the originals.
 
 import abc
-import copy
-import json
 from datetime import datetime
 from pathlib import Path
 from traceback import format_exc
 from typing import Optional, List, Type, Dict
 
 import numpy as np
-import rich
 import xarray
-from qiskit.providers.ibmq.utils.json_encoder import IQXJsonEncoder as PulseQobj_encoder
 from qiskit.qobj import PulseQobj
 from quantify_core.data import handling as dh
 from quantify_core.data.handling import create_exp_folder, gen_tuid
 
 import settings
-from app.libs.quantum_executor.base.experiment import BaseExperiment
-from app.libs.quantum_executor.base.instruction import get_meas_settings
+from app.libs.quantum_executor.base.experiment import NativeExperiment
+from app.libs.quantum_executor.base.utils import NativeQobjConfig, to_native_qobj_config
 from app.libs.quantum_executor.utils.logger import ExperimentLogger
-from app.libs.storage_file.file import QuantumJob, StorageFile
+from app.libs.quantum_executor.base.job import QuantumJob, StorageFile
 
 
 class QuantumExecutor(abc.ABC):
     def __init__(
         self,
-        experiment_cls: Type[BaseExperiment],
+        experiment_cls: Type[NativeExperiment],
         hardware_map: Optional[Dict[str, str]] = None,
     ):
         dh.set_datadir(settings.EXECUTOR_DATA_DIR)
-        self.experiment_cls: Type[BaseExperiment] = experiment_cls
+        self.experiment_cls: Type[NativeExperiment] = experiment_cls
         self.hardware_map = hardware_map
 
-    def register_job(self, tag: str = ""):
-        # TODO: The fields tuid, experiment_folder, and logger could be class properties
-        self.tuid = gen_tuid()
-        self.experiment_folder = Path(create_exp_folder(tuid=self.tuid, name=tag))
-        self.logger = ExperimentLogger(self.tuid)
-        self.logger.info(f"Registered job: {self.tuid}")
-
-    def debug_save_qobj(self, qobj: PulseQobj):
-        """Saves the incoming PulseQobj for debugging.
-        This is a re-encoding when using the rest_api, but it is needed for local debugging.
-        TODO: Avoid re-encoding for external jobs.
-        """
-        file = self.experiment_folder / "qobj.json"
-        with open(file, mode="w") as qj:
-            json.dump(qobj.to_dict(), qj, cls=PulseQobj_encoder, indent="\t")
-        rich.print(f"Saved PulseQobj at {file}")
-        self.logger.info(f"Saved PulseQobj at {file}")
-
-    def construct_experiments(self, qobj: PulseQobj, /) -> List[BaseExperiment]:
+    def _to_native_experiments(
+        self, qobj: PulseQobj, native_config: NativeQobjConfig, /
+    ) -> List[NativeExperiment]:
         """Constructs native experiments from the PulseQobj instance
 
         Args:
             qobj: the Pulse qobject containing the experiments
+            native_config: the native config for the qobj
 
         Returns:
             list of QuantifyExperiment's
         """
-        self.logger.info(f"Compiling qobj")
         native_experiments = [
             self.experiment_cls.from_qobj_expt(
                 name=StorageFile.sanitized_name(expt.header.name, idx + 1),
                 expt=expt,
                 qobj_config=qobj.config,
                 hardware_map=self.hardware_map,
+                native_config=native_config,
             )
             for idx, expt in enumerate(qobj.experiments)
         ]
-        self.logger.info(f"Translated {len(native_experiments)} OpenPulse experiments.")
         return native_experiments
 
     @abc.abstractmethod
-    def run(self, experiment: BaseExperiment, /) -> xarray.Dataset:
+    def _run_native(
+        self,
+        experiment: NativeExperiment,
+        /,
+        *,
+        native_config: NativeQobjConfig,
+        logger: ExperimentLogger,
+    ) -> xarray.Dataset:
+        """Runs the native experiments after they have been compiled from OpenPulse Qobjects
+
+        This method is internally called by the public run() method
+
+        Args:
+            experiment: the native experiment to run
+            native_config: native config for the qobj
+            logger: the logger for the given experiment which logs data in a specific folder
+
+        Returns:
+            xarray.Dataset of results
+        """
         pass
 
-    def run_experiments(
+    def run(
         self,
         qobj: PulseQobj,
         /,
@@ -104,7 +103,12 @@ class QuantumExecutor(abc.ABC):
         Returns:
             the path to the results obtained after measurement
         """
-        self.debug_save_qobj(qobj)
+        tuid = gen_tuid()
+        qobj_tag = qobj.header.get("tag", "")
+        experiment_folder = Path(create_exp_folder(tuid=tuid, name=qobj_tag))
+        logger = ExperimentLogger(tuid)
+        logger.info(f"Starting job: {tuid}")
+
         try:
             # unwrap pulse library
             qobj.config.pulse_library = {
@@ -112,26 +116,27 @@ class QuantumExecutor(abc.ABC):
             }
 
             # translate qobj experiments to quantify schedules
-            self.logger.info(
-                f"Starting constructing experiments for job id: {job_id} at {datetime.now()}"
+            logger.info(
+                f"Starting compilation of OpenPulse experiments for job id: {job_id} at {datetime.now()}"
             )
-            tx = self.construct_experiments(qobj)
+            native_config = to_native_qobj_config(qobj.config)
+            native_expts = self._to_native_experiments(qobj, native_config)
+            logger.info(f"Translated to {len(native_expts)} native experiments.")
 
-            program_settings = get_meas_settings(qobj.config)
-            for k, v in program_settings.dict().items():
-                self.logger.info(f"Set {k} to {v}")
-
-            self.logger.info(f"Running experiments for job id: {job_id}")
+            logger.info(f"Running experiments for job id: {job_id}")
             experiment_results = {
-                expt.header.name: self.run(expt).to_dict() for expt in tx
+                expt.header.name: self._run_native(
+                    expt, native_config=native_config, logger=logger
+                ).to_dict()
+                for expt in native_expts
             }
 
             job = QuantumJob(
                 job_id=job_id,
-                tuid=self.tuid,
-                meas_return=program_settings.meas_return,
-                meas_return_cols=program_settings.meas_return_cols,
-                meas_level=program_settings.meas_level,
+                tuid=tuid,
+                meas_return=native_config.meas_return,
+                meas_return_cols=native_config.meas_return_cols,
+                meas_level=native_config.meas_level,
                 memory_slot_size=qobj.config.memory_slot_size,
                 qobj=qobj,
                 header=qobj.header,
@@ -139,19 +144,17 @@ class QuantumExecutor(abc.ABC):
             )
 
             filename = "measurement.hdf5" if job_id is None else f"{job_id}.hdf5"
-            results_file_path = self.experiment_folder / filename
+            results_file_path = experiment_folder / filename
             job.to_hdf5(results_file_path)
 
-            self.logger.info(f"Stored measurement data at {results_file_path}")
-            self.logger.info(
-                f"Completed {job_id if job_id else 'local job'} with tuid {self.tuid}."
+            logger.info(f"Stored measurement data at {results_file_path}")
+            logger.info(
+                f"Completed {job_id if job_id else 'local job'} with tuid {tuid}."
             )
 
         # record exceptions
         except Exception as e:
-            self.logger.error(
-                f"\nFailed job: {job_id}, tuid: {self.tuid}\n{format_exc()}"
-            )
+            logger.error(f"\nFailed job: {job_id}, tuid: {tuid}\n{format_exc()}")
             raise e
 
         return results_file_path

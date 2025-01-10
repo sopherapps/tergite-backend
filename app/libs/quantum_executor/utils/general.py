@@ -17,7 +17,7 @@ import json
 import sys
 from typing import List, TypeVar, Iterator, Union, Generator, Iterable
 
-from app.libs.storage_file.file import JOB_HDF5_FILE_DELIMITER
+from app.libs.quantum_executor.base.job import JOB_HDF5_FILE_DELIMITER
 
 _T = TypeVar("_T")
 

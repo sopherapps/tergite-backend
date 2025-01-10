@@ -17,17 +17,17 @@ from dataclasses import dataclass
 import retworkx as rx
 from quantify_scheduler import Schedule
 
-from app.libs.quantum_executor.base.experiment import BaseExperiment
+from app.libs.quantum_executor.base.experiment import NativeExperiment
 from app.libs.quantum_executor.quantify.program import QuantifyProgram
 from app.libs.quantum_executor.utils.general import rot_left
-from app.libs.quantum_executor.base.instruction.types import InitialObjectInstruction
+from app.libs.quantum_executor.base.instruction import InitialObjectInstruction
 
 # FIXME: Why is this initial object hard coded here?
 initial_object = InitialObjectInstruction()
 
 
 @dataclass(frozen=True)
-class QuantifyExperiment(BaseExperiment):
+class QuantifyExperiment(NativeExperiment):
     @property
     def schedule(self: "QuantifyExperiment") -> Schedule:
         prog = QuantifyProgram(

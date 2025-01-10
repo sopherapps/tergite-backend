@@ -16,7 +16,8 @@ from os.path import exists
 
 import h5py
 
-from app.libs.storage_file.file import MeasLvl, MeasRet, StorageFile
+from app.libs.quantum_executor.base.job import StorageFile
+from app.libs.quantum_executor.base.utils import MeasLvl, MeasRet
 
 # ensure data directory exists
 pathlib.Path("pytest-data").mkdir(parents=True, exist_ok=True)

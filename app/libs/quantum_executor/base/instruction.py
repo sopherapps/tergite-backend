@@ -11,31 +11,10 @@
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
 
-import enum
-from typing import Union, Type, List
+from typing import List
 from uuid import uuid4 as uuid
 
-import numpy as np
-from pydantic import BaseModel
 from quantify_scheduler.enums import BinMode
-
-from app.libs.storage_file import MeasLvl, MeasRet
-
-
-class MeasProtocol(str, enum.Enum):
-    SSB_INTEGRATION_COMPLEX = "SSBIntegrationComplex"
-    TRACE = "trace"
-
-
-class MeasSettings(BaseModel):
-    """Settings for running measurements"""
-
-    acq_return_type: Union[Type[complex], Type[np.ndarray]]
-    protocol: MeasProtocol
-    bin_mode: BinMode
-    meas_level: MeasLvl
-    meas_return: MeasRet
-    meas_return_cols: int
 
 
 class Instruction:
@@ -77,12 +56,8 @@ class Instruction:
             setattr(self, k, v)
 
     def __eq__(self: object, other: object) -> bool:
-        self_attrs = set(
-            filter(lambda attr: hasattr(self, attr), Instruction.__slots__)
-        )
-        other_attrs = set(
-            filter(lambda attr: hasattr(other, attr), Instruction.__slots__)
-        )
+        self_attrs = set(filter(lambda v: hasattr(self, v), Instruction.__slots__))
+        other_attrs = set(filter(lambda v: hasattr(other, v), Instruction.__slots__))
 
         # if they have different attributes, they cannot be equal
         if self_attrs != other_attrs:

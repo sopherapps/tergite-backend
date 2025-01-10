@@ -25,19 +25,9 @@ from qiskit.providers.ibmq.utils.json_encoder import IQXJsonEncoder as PulseQobj
 from qiskit.qobj import PulseQobj, QobjHeader
 
 from . import utils as parse
+from ..utils import MeasLvl, MeasRet
 
 JOB_HDF5_FILE_DELIMITER = "~"
-
-
-class MeasLvl(int, Enum):
-    DISCRIMINATED = 2
-    INTEGRATED = 1
-    RAW = 0
-
-
-class MeasRet(int, Enum):
-    AVERAGED = 1
-    APPENDED = 0
 
 
 class RegisterOrder(str, Enum):
@@ -244,7 +234,7 @@ class StorageFile:
         return f"{name}{StorageFile.delimiter}{experiment_index}"
 
 
-class QobjMetadata(pydantic.BaseModel):
+class _QobjMetadata(pydantic.BaseModel):
     """Metadata on a Qobject instance"""
 
     shots: int
@@ -267,7 +257,7 @@ class QobjMetadata(pydantic.BaseModel):
         )
 
 
-class XArrayDict(TypedDict):
+class _XArrayDict(TypedDict):
     coords: Any
     attrs: Any
     dims: Any
@@ -286,15 +276,22 @@ class QuantumJob(pydantic.BaseModel):
     memory_slot_size: int = 100
     local: bool = True
     qobj: Optional[PulseQobj] = None
-    metadata: Optional[QobjMetadata] = None
+    metadata: Optional[_QobjMetadata] = None
     header: Optional[QobjHeader] = None
-    experiment_results: Dict[str, XArrayDict] = {}
+    experiment_results: Dict[str, _XArrayDict] = {}
 
     @pydantic.validator("metadata")
-    def set_qobj_metadata(cls, v: Optional[QobjMetadata], values: dict, **kwargs):
+    def set_qobj_metadata(cls, v: Optional[_QobjMetadata], values: dict, **kwargs):
         """Validator to set the metadata based on the qobj"""
         if "qobj" in values:
-            return QobjMetadata.from_qobj(values["qobj"])
+            return _QobjMetadata.from_qobj(values["qobj"])
+        return v
+
+    @pydantic.validator("local")
+    def set_local(cls, v: Optional[bool], values: dict, **kwargs):
+        """Validator to set the local based on job_id"""
+        if "job_id" in values:
+            return values["job_id"] is not None
         return v
 
     @classmethod
@@ -318,7 +315,7 @@ class QuantumJob(pydantic.BaseModel):
 
             if "job_id" in hdf5_file.attrs.keys():
                 props["job_id"] = hdf5_file.attrs["job_id"]
-                props["local"] = False
+                # props["local"] = False
 
         return cls(**{**props, **kwargs})
 
@@ -417,7 +414,7 @@ def _save_qobj_to_hdf5(file: h5py.File, qobj: PulseQobj):
 
 
 def _save_results_to_hdf5(
-    file: h5py.File, results: Dict[str, XArrayDict], meas_return_cols: int
+    file: h5py.File, results: Dict[str, _XArrayDict], meas_return_cols: int
 ):
     """Saves the experiment results to the HDF5 file
 

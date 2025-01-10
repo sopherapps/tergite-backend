@@ -16,22 +16,14 @@
 
 
 import copy
-import json
 import os
 import re
 from datetime import datetime
-from functools import partial
-from typing import Any, Dict, Optional, Union, Callable, List
+from typing import Any, Dict, Optional, Union
 
 import qblox_instruments
 import rich
 from qcodes import Instrument, find_or_create_instrument
-from qiskit.qobj import (
-    PulseQobj,
-    PulseQobjInstruction,
-    PulseQobjConfig,
-    PulseQobjExperiment,
-)
 from quantify_scheduler.backends.qblox.helpers import generate_port_clock_to_device_map
 from quantify_scheduler.backends.qblox_backend import hardware_compile
 from quantify_scheduler.compilation import determine_absolute_timing
@@ -48,14 +40,12 @@ from quantify_scheduler.instrument_coordinator.components.qblox import ClusterCo
 
 from app.libs.quantum_executor.base.executor import QuantumExecutor
 from app.libs.quantum_executor.quantify.experiment import QuantifyExperiment
-from app.libs.quantum_executor.utils.channel import Channel
 from app.libs.quantum_executor.utils.config import (
     ClusterModuleType,
     QuantifyExecutorConfig,
 )
-from app.libs.quantum_executor.base.instruction import Instruction, extract_instructions
-from app.libs.quantum_executor.utils.general import flatten_list
-from app.libs.storage_file import StorageFile
+from app.libs.quantum_executor.base.experiment import NativeQobjConfig
+from app.libs.quantum_executor.utils.logger import ExperimentLogger
 
 _QBLOX_CLUSTER_TYPE_MAP: Dict[ClusterModuleType, qblox_instruments.ClusterType] = {
     ClusterModuleType.QCM: qblox_instruments.ClusterType.CLUSTER_QCM,
@@ -147,16 +137,14 @@ class QuantifyExecutor(QuantumExecutor):
                 device=device,
             )
 
-    def register_job(self, tag: str = ""):
-        super().register_job(tag)
-        self.logger.info(
-            f"Loaded hardware configuration: {json.dumps(self.quantify_config, indent=4)}"
-        )
-        self.logger.info(
-            f"Generated hardware map: {json.dumps(self.hardware_map, indent=4)}"
-        )
-
-    def run(self, experiment: QuantifyExperiment, /):
+    def _run_native(
+        self,
+        experiment: QuantifyExperiment,
+        /,
+        *,
+        native_config: NativeQobjConfig,
+        logger: ExperimentLogger,
+    ):
         QuantifyExecutor._coordinator.stop()
 
         # compile to hardware
@@ -173,8 +161,8 @@ class QuantifyExecutor(QuantumExecutor):
         print(t2 - t1, "DURATION OF COMPILING")
 
         # log the sequencer assembler programs and the schedule timing table
-        self.logger.log_Q1ASM_programs(compiled_schedule)
-        self.logger.log_schedule(compiled_schedule)
+        logger.log_Q1ASM_programs(compiled_schedule)
+        logger.log_schedule(compiled_schedule)
 
         # upload schedule to instruments & arm sequencers
         self._coordinator.prepare(compiled_schedule)

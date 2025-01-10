@@ -18,7 +18,7 @@ If you want to implement a new executor, follow these steps below.
 - Incoming jobs will be in the OpenPulse format.
 - Implement a logic to translate the OpenPulse circuit to the format which your backend takes.
 - This potentially involves interfacing the classes:
-  - `BaseExperiment`: To implement a logic on how to iterate over the OpenPulse instructions.
+  - `NativeExperiment`: To implement a logic on how to iterate over the OpenPulse instructions.
   - `BaseProgram`: To translate the individual instructions.
 - Other classes in the `quantum_executor` library might have to be adapted or added.
 

@@ -20,7 +20,7 @@ import retworkx as rx
 from qiskit.qobj import PulseQobjExperiment, PulseQobjConfig, PulseQobjInstruction
 from quantify_scheduler import Schedule
 
-from app.libs.quantum_executor.base.experiment import NativeExperiment
+from app.libs.quantum_executor.base.experiment import NativeExperiment, copy_expt_header_with
 from app.libs.quantum_executor.base.utils import NativeQobjConfig
 from .program import QuantifyProgram
 from app.libs.quantum_executor.utils.channel import Channel
@@ -35,7 +35,6 @@ from .instruction import (
     ParamPulseInstruction,
     PulseLibInstruction,
 )
-from ..base.experiment.utils import copy_header_with
 
 # FIXME: Why is this initial object hard coded here?
 initial_object = InitialObjectInstruction()
@@ -114,7 +113,7 @@ class QuantifyExperiment(NativeExperiment):
         Returns:
             the QiskitDynamicsExperiment corresponding to the PulseQobj
         """
-        header = copy_header_with(expt.header, name=name)
+        header = copy_expt_header_with(expt.header, name=name)
         inst_nested_list = (
             _extract_instructions(
                 qobj_inst=inst,

@@ -40,12 +40,12 @@ from quantify_scheduler.instrument_coordinator.components.generic import (
 from quantify_scheduler.instrument_coordinator.components.qblox import ClusterComponent
 
 from app.libs.quantum_executor.base.executor import QuantumExecutor
+from app.libs.quantum_executor.base.utils import NativeQobjConfig
 from app.libs.quantum_executor.quantify.experiment import QuantifyExperiment
 from app.libs.quantum_executor.utils.config import (
     ClusterModuleType,
     QuantifyExecutorConfig,
 )
-from app.libs.quantum_executor.base.experiment import NativeQobjConfig
 from app.libs.quantum_executor.utils.general import get_experiment_name
 from app.libs.quantum_executor.utils.logger import ExperimentLogger
 

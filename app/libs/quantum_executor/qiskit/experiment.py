@@ -20,11 +20,10 @@ from typing import List, Dict, Type, Tuple, Optional
 
 from qiskit.qobj import PulseQobjExperiment, PulseQobjConfig, PulseQobjInstruction
 
-from app.libs.quantum_executor.base.experiment import NativeExperiment
+from app.libs.quantum_executor.base.experiment import NativeExperiment, copy_expt_header_with
 
 from qiskit.pulse.schedule import Schedule
 
-from app.libs.quantum_executor.base.experiment.utils import copy_header_with
 from .instruction import (
     GaussianPlay,
     WacqtCZPlay,
@@ -78,7 +77,7 @@ class QiskitDynamicsExperiment(NativeExperiment):
         Returns:
             the QiskitDynamicsExperiment corresponding to the PulseQobj
         """
-        header = copy_header_with(expt.header, name=name)
+        header = copy_expt_header_with(expt.header, name=name)
         timestamp: str = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         raw_schedule = Schedule(name=f"open-pulse-generated-{timestamp}")
 

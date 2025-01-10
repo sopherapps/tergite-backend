@@ -14,6 +14,7 @@
 # Refactored by Martin Ahindura (2024)
 
 import abc
+import copy
 from dataclasses import dataclass
 from functools import cached_property
 from typing import FrozenSet, List
@@ -69,3 +70,20 @@ class NativeExperiment(abc.ABC):
         df = self.schedule.timing_table.data
         df.sort_values("abs_time", inplace=True)
         return df
+
+
+def copy_expt_header_with(header: QobjExperimentHeader, **kwargs):
+    """Copies a new header from the old header with new kwargs set
+
+    Args:
+        header: the original QobjExperimentHeader header
+        kwargs: the extra key-word args to set on the header
+
+    Returns:
+        a copy QobjExperimentHeader instance
+    """
+    new_header = copy.deepcopy(header)
+    for k, v in kwargs.items():
+        setattr(new_header, k, v)
+
+    return new_header

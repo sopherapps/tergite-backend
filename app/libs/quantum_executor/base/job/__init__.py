@@ -61,6 +61,7 @@ class StorageFile:
         memory_slot_size: int = 100,  # the maximum number of classical register slots
     ):
         pass
+        # TODO: Remove StorageFile class
 
     # TODO: leave register_sparsity as full and set it to sparse for cases where there are multiple values per shot
     def as_readout(

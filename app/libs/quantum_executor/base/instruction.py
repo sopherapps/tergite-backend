@@ -10,11 +10,14 @@
 # Any modifications or derivative works of this code must retain this
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
-
-from typing import List
+import abc
+from typing import List, Optional, Dict, Any
 from uuid import uuid4 as uuid
 
+from qiskit.qobj import PulseQobjInstruction, PulseQobjConfig
 from quantify_scheduler.enums import BinMode
+
+from app.libs.quantum_executor.base.utils import NativeQobjConfig
 
 
 class Instruction:
@@ -89,3 +92,25 @@ class Instruction:
     @property
     def pretty_name(self) -> str:
         return self.name
+
+    @classmethod
+    @abc.abstractmethod
+    def list_from_qobj_inst(
+        cls,
+        qobj_inst: PulseQobjInstruction,
+        config: PulseQobjConfig,
+        native_config: NativeQobjConfig,
+        hardware_map: Optional[Dict[str, Any]] = None,
+    ) -> List["Instruction"]:
+        """Generates instances of instruction given a PulseQobjInstruction
+
+        Args:
+            qobj_inst: the PulseQobjInstruction to convert from
+            config: the PulseQobjConfig for the instruction
+            native_config: the native configuration for the qobj
+            hardware_map: the mapping of the layout of the physical device
+
+        Returns:
+            instances of this class as derived from the qobj_inst
+        """
+        pass

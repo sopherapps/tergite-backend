@@ -27,19 +27,18 @@ import settings
 from app.libs.quantum_executor.base.experiment import NativeExperiment
 from app.libs.quantum_executor.base.utils import NativeQobjConfig, to_native_qobj_config
 from app.libs.quantum_executor.utils.logger import ExperimentLogger
-from app.libs.quantum_executor.base.job import QuantumJob, StorageFile
+from app.libs.quantum_executor.base.job import QuantumJob
 
 
 class QuantumExecutor(abc.ABC):
     def __init__(
         self,
-        experiment_cls: Type[NativeExperiment],
         hardware_map: Optional[Dict[str, str]] = None,
     ):
         dh.set_datadir(settings.EXECUTOR_DATA_DIR)
-        self.experiment_cls: Type[NativeExperiment] = experiment_cls
         self.hardware_map = hardware_map
 
+    @abc.abstractmethod
     def _to_native_experiments(
         self, qobj: PulseQobj, native_config: NativeQobjConfig, /
     ) -> List[NativeExperiment]:
@@ -50,19 +49,9 @@ class QuantumExecutor(abc.ABC):
             native_config: the native config for the qobj
 
         Returns:
-            list of QuantifyExperiment's
+            list of NativeExperiment's
         """
-        native_experiments = [
-            self.experiment_cls.from_qobj_expt(
-                name=StorageFile.sanitized_name(expt.header.name, idx + 1),
-                expt=expt,
-                qobj_config=qobj.config,
-                hardware_map=self.hardware_map,
-                native_config=native_config,
-            )
-            for idx, expt in enumerate(qobj.experiments)
-        ]
-        return native_experiments
+        pass
 
     @abc.abstractmethod
     def _run_native(

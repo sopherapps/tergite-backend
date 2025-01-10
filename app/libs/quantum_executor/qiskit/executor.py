@@ -10,47 +10,76 @@
 # Any modifications or derivative works of this code must retain this
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
+import abc
+from typing import Type, List
 
 import numpy as np
 import xarray
-from qiskit.result import Result
+from qiskit.qobj import PulseQobj
 
 from app.libs.quantum_executor.base.executor import QuantumExecutor
-from app.libs.quantum_executor.base.experiment import NativeExperiment, NativeQobjConfig
+from app.libs.quantum_executor.base.experiment import NativeExperiment
 from app.libs.quantum_executor.qiskit.experiment import QiskitDynamicsExperiment
-from .backend import QiskitPulse1Q, QiskitPulse2Q
-from ..base.utils import MeasRet
+from .backends.two_qubit import QiskitPulse2Q
+from .backends.one_qubit import QiskitPulse1Q
+from .backends.base import QiskitPulseBackend
+from ..base.utils import MeasRet, NativeQobjConfig
+from ..utils.general import get_experiment_name
 from ..utils.logger import ExperimentLogger
 from ...properties import BackendConfig
 
 
-class QiskitDynamicsExecutor(QuantumExecutor):
-    def __init__(self, backend_config: BackendConfig):
-        super().__init__(experiment_cls=QiskitDynamicsExperiment)
-        self.backend = QiskitPulse1Q(backend_config=backend_config)
-
-    def _run_native(
+class QiskitDynamicsExecutor(QuantumExecutor, abc.ABC):
+    def __init__(
         self,
-        experiment: NativeExperiment,
-        /,
-        *,
-        native_config: NativeQobjConfig,
-        logger: ExperimentLogger,
-    ) -> xarray.Dataset:
-        job = self.backend.run(experiment.schedule)
-        result: Result = job.result()
-        return result.data()["memory"]
+        backend_config: BackendConfig,
+        backend_cls: Type[QiskitPulseBackend] = QiskitPulse1Q,
+        **kwargs,
+    ):
+        """Creates the QiskitDynamicsExecutor for the given backend class and key-word args
+
+        Args:
+            backend_config: the configuration of the backend
+            backend_cls: the class of the backend
+            kwargs: extra key-word args to pass to the backend on initialisation
+        """
+        super().__init__()
+        self.backend = backend_cls(backend_config=backend_config, **kwargs)
+
+    def _to_native_experiments(
+        self, qobj: PulseQobj, native_config: NativeQobjConfig, /
+    ) -> List[QiskitDynamicsExperiment]:
+        """Constructs qiskit dynamics experiments from the PulseQobj instance
+
+        Args:
+            qobj: the Pulse qobject containing the experiments
+            native_config: the native config for the qobj
+
+        Returns:
+            list of QiskitDynamicsExperiment's
+        """
+        native_experiments = [
+            QiskitDynamicsExperiment.from_qobj_expt(
+                name=get_experiment_name(expt.header.name, idx + 1),
+                expt=expt,
+                qobj_config=qobj.config,
+            )
+            for idx, expt in enumerate(qobj.experiments)
+        ]
+        return native_experiments
 
     def close(self):
         pass
 
 
-class QiskitPulse1QExecutor(QuantumExecutor):
+class QiskitPulse1QExecutor(QiskitDynamicsExecutor):
     def __init__(self, backend_config: BackendConfig):
-        super().__init__(experiment_cls=QiskitDynamicsExperiment)
         # TODO: Use measurement level provided by the client request if discriminator is not provided
-        self.backend = QiskitPulse1Q(
-            meas_level=1, meas_return="single", backend_config=backend_config
+        super().__init__(
+            backend_config=backend_config,
+            backend_cls=QiskitPulse1Q,
+            meas_level=1,
+            meas_return="single",
         )
 
     def _run_native(
@@ -102,26 +131,14 @@ class QiskitPulse1QExecutor(QuantumExecutor):
 
         return ds
 
-    # def construct_experiments(self, qobj: PulseQobj, /) -> List[QiskitDynamicsExperiment]:
-    #     # because we avoid experiments structure we have to pass shots and
-    #     # measurement level configurations to the run function
-    #     self.shots = qobj.config.shots
-    #     self.meas_return = qobj.config.meas_return
-    #     qobj_dict = qobj.to_dict()
-    #     tx = transpile(qobj_dict)
-    #
-    #     self.logger.info(f"Translated {len(tx)} OpenPulse experiments.")
-    #     return tx
 
-    def close(self):
-        pass
-
-
-class QiskitPulse2QExecutor(QuantumExecutor):
+class QiskitPulse2QExecutor(QiskitDynamicsExecutor):
     def __init__(self, backend_config: BackendConfig):
-        super().__init__(experiment_cls=QiskitDynamicsExperiment)
-        self.backend = QiskitPulse2Q(
-            meas_level=1, meas_return="single", backend_config=backend_config
+        super().__init__(
+            backend_config=backend_config,
+            backend_cls=QiskitPulse2Q,
+            meas_level=1,
+            meas_return="single",
         )
 
     def _run_native(
@@ -162,15 +179,3 @@ class QiskitPulse2QExecutor(QuantumExecutor):
 
         ds = xarray.Dataset(data_vars=data_vars, coords=coords)
         return ds
-
-    # def construct_experiments(self, qobj: PulseQobj, /) -> List[QiskitDynamicsExperiment]:
-    #     qobj_dict = qobj.to_dict()
-    #     self.shots = qobj.config.shots
-    #     self.meas_return = qobj.config.meas_return
-    #     tx = transpile(qobj_dict)
-    #
-    #     self.logger.info(f"Translated {len(tx)} OpenPulse experiments.")
-    #     return tx
-
-    def close(self):
-        pass

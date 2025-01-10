@@ -62,12 +62,6 @@ def get_executor(
         )
         discriminator_config = executor.backend.train_discriminator()
 
-    if executor_type == "qiskit":
-        executor: QiskitDynamicsExecutor = QiskitDynamicsExecutor(
-            backend_config=backend_config
-        )
-        discriminator_config = executor.backend.train_discriminator()
-
     initialize_backend(
         mss_client=get_mss_client(),
         mss_url=mss_url,

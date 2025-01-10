@@ -19,11 +19,12 @@ import copy
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, List
 
 import qblox_instruments
 import rich
 from qcodes import Instrument, find_or_create_instrument
+from qiskit.qobj import PulseQobj
 from quantify_scheduler.backends.qblox.helpers import generate_port_clock_to_device_map
 from quantify_scheduler.backends.qblox_backend import hardware_compile
 from quantify_scheduler.compilation import determine_absolute_timing
@@ -45,6 +46,7 @@ from app.libs.quantum_executor.utils.config import (
     QuantifyExecutorConfig,
 )
 from app.libs.quantum_executor.base.experiment import NativeQobjConfig
+from app.libs.quantum_executor.utils.general import get_experiment_name
 from app.libs.quantum_executor.utils.logger import ExperimentLogger
 
 _QBLOX_CLUSTER_TYPE_MAP: Dict[ClusterModuleType, qblox_instruments.ClusterType] = {
@@ -80,9 +82,7 @@ class QuantifyExecutor(QuantumExecutor):
                 self.quantify_config
             ).items()
         }
-        super().__init__(
-            experiment_cls=QuantifyExperiment, hardware_map=self.hardware_map
-        )
+        super().__init__(hardware_map=self.hardware_map)
 
         # load clusters
         for cluster in conf.clusters:
@@ -136,6 +136,30 @@ class QuantifyExecutor(QuantumExecutor):
                 component_type=GenericInstrumentCoordinatorComponent,
                 device=device,
             )
+
+    def _to_native_experiments(
+        self, qobj: PulseQobj, native_config: NativeQobjConfig, /
+    ) -> List[QuantifyExperiment]:
+        """Constructs quantify experiments from the PulseQobj instance
+
+        Args:
+            qobj: the Pulse qobject containing the experiments
+            native_config: the native config for the qobj
+
+        Returns:
+            list of QuantifyExperiment's
+        """
+        native_experiments = [
+            QuantifyExperiment.from_qobj_expt(
+                name=get_experiment_name(expt.header.name, idx + 1),
+                expt=expt,
+                qobj_config=qobj.config,
+                hardware_map=self.hardware_map,
+                native_config=native_config,
+            )
+            for idx, expt in enumerate(qobj.experiments)
+        ]
+        return native_experiments
 
     def _run_native(
         self,

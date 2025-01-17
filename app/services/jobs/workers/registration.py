@@ -29,6 +29,16 @@ JOB_EXECUTION_POOL_DIRNAME = settings.JOB_EXECUTION_POOL_DIRNAME
 JOB_PRE_PROC_POOL_DIRNAME = settings.JOB_PRE_PROC_POOL_DIRNAME
 
 
+# TODO: Get rid of redis-based rq queueing. Let a simple FIFO queue be implemented using
+#     timestamped sqlite entries. Take note the sqlite does not play well in multithreaded in the default setting.
+#     Reasons for change:
+#        - fewer dependencies, sqlite comes pre-installed in python
+#        - higher speed of access since there is no network call. SQLite is embedded
+#        - simpler code, flowing as a single process. 
+#          Gotcha: While execution is mostly IO and can be made asynchronous, state discrimination maybe CPU-intensive.
+#          It is expected that some form of multiprocessing must happen.
+
+
 # preprocessing queue
 rq_queues = QueuePool(prefix=DEFAULT_PREFIX, connection=settings.REDIS_CONNECTION)
 

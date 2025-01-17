@@ -37,6 +37,8 @@ JOB_PRE_PROC_POOL_DIRNAME = settings.JOB_PRE_PROC_POOL_DIRNAME
 #        - simpler code, flowing as a single process. 
 #          Gotcha: While execution is mostly IO and can be made asynchronous, state discrimination maybe CPU-intensive.
 #          It is expected that some form of multiprocessing must happen.
+# Probably using an event loop like mechanism like JavaScript/Nodejs does i.e. running an asyncio loop might
+# help with concurrency.
 
 
 # preprocessing queue
